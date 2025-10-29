@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Station Live Dashboard — Step Line + Alerts</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+  <style>
+    :root{
+      --bg-1:#05060a;
+      --bg-2:#071021;
+      --card:#0f1724;
+      --muted:#98a4b2;
+      --glass: rgba(255,255,255,0.04);
+      --accent-temp:#ff9f43;
+      --accent-hum:#60a5fa;
+      --accent-cps:#ffd166;
+      --accent-usv:#7c5cff;
+      --accent-counts:#4bc0c0;
+      --alert-red: #ff4d4f;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      background: linear-gradient(180deg,var(--bg-1) 0%, var(--bg-2) 60%);
+      color:#e7eef8;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      padding:22px;
+      -webkit-font-smoothing:antialiased;
+    }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px;}
+    header h1{ font-size:20px; margin:0; font-weight:600;}
+    header .subtitle{ color:var(--muted); font-size:13px; }
+
+    /* controls */
+    .controls{ display:flex; gap:8px; align-items:center; }
+    .select{ background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.04); padding:8px 10px; border-radius:8px; }
+    .btn{ background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.04); padding:8px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
+    .status{ font-size:13px; color:var(--muted); margin-left:10px; }
+
+    /* mini cards */
+    .mini-grid{
+      display:grid;
+      grid-template-columns: repeat(6, minmax(0,1fr));
+      gap:12px;
+      margin:18px 0;
+    }
+    .mini{
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:10px;
+      padding:10px;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border:1px solid rgba(255,255,255,0.03);
+      box-shadow: 0 8px 24px rgba(2,6,23,0.6);
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      min-height:64px;
+      justify-content:center;
+      transition: box-shadow .2s, transform .12s, background-color .2s;
+    }
+    .mini.alert { background: linear-gradient(180deg, rgba(255,77,79,0.12), rgba(255,77,79,0.06)); box-shadow: 0 10px 30px rgba(255,77,79,0.12); border-color: rgba(255,77,79,0.18); transform: translateY(-2px); }
+    .mini .label{ font-size:12px; color:var(--muted); }
+    .mini .value{ font-size:18px; font-weight:700; letter-spacing:0.2px; }
+    .mini .small{ font-size:11px; color:var(--muted); }
+
+    /* charts */
+    .charts{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap:16px;
+    }
+    .chart-card{
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:12px;
+      padding:12px;
+      border:1px solid rgba(255,255,255,0.03);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+      position:relative;
+      overflow:hidden;
+      min-height:260px;
+    }
+    .chart-title{ font-size:14px; color:#eaf3ff; margin-bottom:8px; font-weight:600;}
+    .chart-wrap{ width:100%; height:220px; }
+
+    .full-row{ grid-column:1/-1; display:flex; flex-direction:column; gap:8px; }
+
+    @media (max-width:1100px){ .mini-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
+    @media (max-width:700px){
+      .mini-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .charts{ grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Station Live Dashboard</h1>
+    <div class="subtitle">Step-line charts • Glass / Dark • Alerts (uSv > 0.30 µSv/h)</div>
+  </div>
+  <div class="controls">
+    <select id="stationSelect" class="select" title="Chọn station">
+      <option value="https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_01">station_01 (default placeholder)</option>
+      <option value="https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_02">station_02</option>
+      <option value="https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_03" selected>station_03</option>
+    </select>
+    <button id="pauseBtn" class="btn">Pause</button>
+    <button id="clearBtn" class="btn">Clear</button>
+    <div class="status" id="status">Status: idle</div>
+  </div>
+</header>
+
+<!-- mini cards -->
+<div class="mini-grid">
+  <div class="mini" id="mini-temp"><div class="label">Temperature</div><div class="value" id="v-temp">-- °C</div><div class="small" id="t-temp">—</div></div>
+  <div class="mini" id="mini-hum"><div class="label">Humidity</div><div class="value" id="v-hum">-- %</div><div class="small" id="t-hum">—</div></div>
+  <div class="mini" id="mini-cps"><div class="label">CPS (count/s)</div><div class="value" id="v-cps">--</div><div class="small" id="t-cps">—</div></div>
+  <div class="mini" id="mini-usv"><div class="label">uSv (µSv/h)</div><div class="value" id="v-usv">--</div><div class="small" id="t-usv">—</div></div>
+  <div class="mini" id="mini-counts"><div class="label">Counts (total)</div><div class="value" id="v-counts">--</div><div class="small" id="t-counts">—</div></div>
+  <div class="mini" id="mini-time"><div class="label">Device Time</div><div class="value" id="v-time">--</div><div class="small" id="t-update">last update</div></div>
+</div>
+
+<!-- charts grid -->
+<div class="charts">
+  <div class="chart-card">
+    <div class="chart-title">Temperature (°C)</div>
+    <div class="chart-wrap"><canvas id="chart-temp"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title">Humidity (%)</div>
+    <div class="chart-wrap"><canvas id="chart-hum"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title">CPS (count/s)</div>
+    <div class="chart-wrap"><canvas id="chart-cps"></canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title">uSv (µSv/h)</div>
+    <div class="chart-wrap"><canvas id="chart-usv"></canvas></div>
+  </div>
+
+  <div class="chart-card full-row">
+    <div class="chart-title">Counts (total)</div>
+    <div class="chart-wrap"><canvas id="chart-counts"></canvas></div>
+  </div>
+</div>
+
+<script>
+/* ===== CONFIG ===== */
+const STATIONS = [
+  { id: 'station_01', url: 'https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_01' },
+  { id: 'station_02', url: 'https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_02' },
+  { id: 'station_03', url: 'https://z2c6um5ew3.execute-api.ap-southeast-1.amazonaws.com/data?station=station_03' }
+];
+// default to station_03 (selected in UI)
+let currentApi = STATIONS[2].url;
+
+const INTERVAL_MS = 3000;
+const MAX_POINTS = 30;
+const USV_THRESHOLD = 0.30; // µSv/h -> cảnh báo
+
+/* ===== UI refs ===== */
+const statusEl = document.getElementById('status');
+const stationSelect = document.getElementById('stationSelect');
+const pauseBtn = document.getElementById('pauseBtn');
+const clearBtn = document.getElementById('clearBtn');
+
+const mini = {
+  temp: document.getElementById('v-temp'),
+  hum:  document.getElementById('v-hum'),
+  cps:  document.getElementById('v-cps'),
+  usv:  document.getElementById('v-usv'),
+  counts: document.getElementById('v-counts'),
+  time: document.getElementById('v-time'),
+  cardTemp: document.getElementById('mini-temp'),
+  cardHum: document.getElementById('mini-hum'),
+  cardCps: document.getElementById('mini-cps'),
+  cardUsv: document.getElementById('mini-usv'),
+  cardCounts: document.getElementById('mini-counts'),
+  ttemp: document.getElementById('t-temp'),
+  thum: document.getElementById('t-hum'),
+  tcps: document.getElementById('t-cps'),
+  tusv: document.getElementById('t-usv'),
+  tcounts: document.getElementById('t-counts'),
+  tupdate: document.getElementById('t-update')
+};
+
+/* ===== Chart factory (step-line) ===== */
+function makeStepChart(canvasEl, color){
+  const ctx = canvasEl.getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: color, backgroundColor: color, stepped: true, borderWidth: 2, pointRadius: 2, fill: false }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 240 },
+      plugins: { legend: { display:false }, tooltip: { mode:'index', intersect:false } },
+      scales: {
+        x: { ticks:{ color:'#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.03)' } },
+        y: { ticks:{ color:'#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.03)' } }
+      },
+      interaction: { mode: 'nearest', intersect: false }
+    }
+  });
+}
+
+/* create charts with base colors */
+const chartTemp   = makeStepChart(document.getElementById('chart-temp'),   getComputedStyle(document.documentElement).getPropertyValue('--accent-temp') || '#ff9f43');
+const chartHum    = makeStepChart(document.getElementById('chart-hum'),    getComputedStyle(document.documentElement).getPropertyValue('--accent-hum') || '#60a5fa');
+const chartCps    = makeStepChart(document.getElementById('chart-cps'),    getComputedStyle(document.documentElement).getPropertyValue('--accent-cps') || '#ffd166');
+const chartUsv    = makeStepChart(document.getElementById('chart-usv'),    getComputedStyle(document.documentElement).getPropertyValue('--accent-usv') || '#7c5cff');
+const chartCounts = makeStepChart(document.getElementById('chart-counts'),  getComputedStyle(document.documentElement).getPropertyValue('--accent-counts') || '#4bc0c0');
+
+/* helper: push and trim */
+function pushPoint(chart, label, value){
+  chart.data.labels.push(label);
+  chart.data.datasets[0].data.push(value);
+  while(chart.data.labels.length > MAX_POINTS){
+    chart.data.labels.shift();
+    chart.data.datasets[0].data.shift();
+  }
+  chart.update('none');
+}
+function safeNum(x){ const n = Number(x); return Number.isFinite(n) ? n : NaN; }
+
+/* state */
+let paused = false;
+let loopHandle = null;
+
+/* fetch latest data from currentApi */
+async function pollOnce(){
+  if(paused) return;
+  try{
+    statusEl.textContent = 'Status: loading...';
+    const resp = await fetch(currentApi, { cache: "no-store" });
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    const arr = await resp.json();
+    if(!Array.isArray(arr) || arr.length === 0){
+      statusEl.textContent = 'Status: no data';
+      return;
+    }
+    const d = arr[arr.length - 1];
+
+    const temp = safeNum(d.temperature ?? d.temp);
+    const hum  = safeNum(d.humidity);
+    const cps  = safeNum(d.cps);
+    const usv  = safeNum(d.uSv ?? d.usv);
+    const counts = safeNum(d.counts);
+
+    const tsMs = d.timestamp ? Number(d.timestamp) * 1000 : Date.now();
+    const timeLabel = new Date(tsMs).toLocaleTimeString();
+
+    // update mini cards
+    mini.temp.textContent = Number.isFinite(temp) ? temp.toFixed(1) + ' °C' : '--';
+    mini.hum.textContent  = Number.isFinite(hum)  ? hum.toFixed(0) + ' %' : '--';
+    mini.cps.textContent  = Number.isFinite(cps)  ? cps.toString() : '--';
+    mini.usv.textContent  = Number.isFinite(usv)  ? usv.toFixed(3) + ' µSv/h' : '--';
+    mini.counts.textContent = Number.isFinite(counts) ? counts.toString() : '--';
+    mini.time.textContent = d.LocalTime ?? timeLabel;
+
+    mini.ttemp.textContent = timeLabel;
+    mini.thum.textContent = timeLabel;
+    mini.tcps.textContent = timeLabel;
+    mini.tusv.textContent = timeLabel;
+    mini.tcounts.textContent = timeLabel;
+    mini.tupdate.textContent = 'updated ' + new Date().toLocaleTimeString();
+
+    // uSv alert behavior
+    const usvAlert = Number.isFinite(usv) && usv > USV_THRESHOLD;
+    if(usvAlert){
+      mini.cardUsv.classList.add('alert');
+      // change chart color to alert red
+      chartUsv.data.datasets[0].borderColor = getComputedStyle(document.documentElement).getPropertyValue('--alert-red') || '#ff4d4f';
+      chartUsv.data.datasets[0].backgroundColor = 'rgba(255,77,79,0.08)';
+    } else {
+      mini.cardUsv.classList.remove('alert');
+      chartUsv.data.datasets[0].borderColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-usv') || '#7c5cff';
+      chartUsv.data.datasets[0].backgroundColor = 'rgba(124,92,255,0.06)';
+    }
+
+    // push to charts (append)
+    if(Number.isFinite(temp))   pushPoint(chartTemp, timeLabel, temp);
+    if(Number.isFinite(hum))    pushPoint(chartHum, timeLabel, hum);
+    if(Number.isFinite(cps))    pushPoint(chartCps, timeLabel, cps);
+    if(Number.isFinite(usv))    pushPoint(chartUsv, timeLabel, usv);
+    if(Number.isFinite(counts)) pushPoint(chartCounts, timeLabel, counts);
+
+    statusEl.textContent = 'Status: OK · last ' + timeLabel;
+  }catch(err){
+    console.error('Poll error', err);
+    statusEl.textContent = 'Status: error — ' + (err.message || err);
+  }
+}
+
+/* controls */
+pauseBtn.addEventListener('click', ()=>{
+  paused = !paused;
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  statusEl.textContent = paused ? 'Status: paused' : 'Status: running';
+});
+clearBtn.addEventListener('click', ()=>{
+  [chartTemp,chartHum,chartCps,chartUsv,chartCounts].forEach(c=>{
+    c.data.labels = [];
+    c.data.datasets[0].data = [];
+    c.update();
+  });
+  // reset mini cards
+  mini.ttemp.textContent = mini.thum.textContent = mini.tcps.textContent = mini.tusv.textContent = mini.tcounts.textContent = '--';
+  statusEl.textContent = 'Cleared charts';
+});
+
+/* station change */
+stationSelect.addEventListener('change', (e)=>{
+  const url = e.target.value;
+  currentApi = url;
+  // clear charts immediately
+  [chartTemp,chartHum,chartCps,chartUsv,chartCounts].forEach(c=>{
+    c.data.labels = []; c.data.datasets[0].data = []; c.update();
+  });
+  statusEl.textContent = 'Switched station, loading...';
+  // poll once immediately
+  pollOnce();
+});
+
+/* start loop */
+pollOnce(); // first immediate
+loopHandle = setInterval(pollOnce, INTERVAL_MS);
+
+/* cleanup */
+window.addEventListener('beforeunload', ()=> clearInterval(loopHandle));
+</script>
+</body>
+</html>
